@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Route Lab: how a GPS uses live data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF0E8; --panel:#FFFFFF; --ink:#1B2A2F; --muted:#5A6A6E; --line:#D5DAD0;
+  --block:#E1E5DA; --road:#FFFFFF; --casing:#C3C9BD; --lake:#A9CCE3;
+  --route:#1466C8; --route-soft:#DCE9F8; --slow:#E8A21A; --jam:#D64532; --closed:#1B2A2F; --probe:#6B7B7F; --ping:#E8A21A;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#172024; --panel:#1F2A2F; --ink:#E6ECE8; --muted:#9AA9AC; --line:#34423F;
+    --block:#1D282C; --road:#3B484D; --casing:#2A3539; --lake:#1E4460;
+    --route:#6AA8F0; --route-soft:#18324F; --closed:#E6ECE8; --probe:#9AA9AC;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#172024; --panel:#1F2A2F; --ink:#E6ECE8; --muted:#9AA9AC; --line:#34423F;
+  --block:#1D282C; --road:#3B484D; --casing:#2A3539; --lake:#1E4460;
+  --route:#6AA8F0; --route-soft:#18324F; --closed:#E6ECE8; --probe:#9AA9AC;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.5}
+h1,h2{font-family:"Barlow Semi Condensed","Barlow",system-ui,sans-serif;font-weight:600;margin:0}
+h1{font-size:30px;letter-spacing:-0.01em}
+h2{font-size:18px;display:flex;align-items:center;gap:8px}
+h2 .step{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ink);color:var(--paper);font-size:13px;flex:none}
+.wrap{max-width:1300px;margin:0 auto;padding:20px 20px 32px}
+header p{margin:4px 0 0;color:var(--muted);max-width:78ch}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:20px;margin-top:16px;align-items:start}
+@media (max-width:980px){.layout{grid-template-columns:minmax(0,1fr)}}
+.mapbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:10px}
+.clock{margin-left:auto;font-variant-numeric:tabular-nums;font-family:"Barlow Semi Condensed",sans-serif;font-size:20px;font-weight:600}
+svg{width:100%;height:auto;display:block;touch-action:manipulation}
+aside{display:flex;flex-direction:column;gap:14px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.sub{font-size:13px;color:var(--muted);margin:2px 0 0}
+select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+button{font:inherit;font-weight:500;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:8px;padding:5px 10px;cursor:pointer}
+button:hover{border-color:var(--muted)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--route);outline-offset:2px}
+button.primary{background:var(--route);border-color:var(--route);color:#fff}
+.tool[aria-pressed="true"]{background:var(--route-soft);border-color:var(--route)}
+.sw{width:14px;height:6px;border-radius:3px;display:inline-block;vertical-align:middle;margin-right:5px}
+.lbl{font-size:13px;color:var(--muted)}
+.inline{display:flex;align-items:center;gap:6px}
+.feed{margin-top:8px;font-variant-numeric:tabular-nums;font-size:13px}
+.feed .r{display:grid;grid-template-columns:62px 54px 1fr 62px;gap:6px;padding:3px 0;border-top:1px solid var(--line)}
+.feed .r:first-child{border-top:0}
+.feed .v{text-align:right;font-weight:600;white-space:nowrap}
+.feed .bad{color:var(--jam)}
+.feed .you{color:var(--route)}
+.insp{font-size:14px;margin-top:8px}
+.insp .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+.insp .row span:first-child{color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 6px}
+.chip{font-size:12px;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums}
+.chip.bad{border-color:var(--jam);color:var(--jam)}
+.math{background:var(--paper);border-radius:8px;padding:8px 10px;font-size:13px;margin-top:6px;font-variant-numeric:tabular-nums}
+.eta{display:flex;align-items:baseline;gap:10px;margin-top:6px}
+.eta strong{font-family:"Barlow Semi Condensed",sans-serif;font-size:44px;line-height:1;font-weight:600;font-variant-numeric:tabular-nums}
+.log{font-size:13px;color:var(--muted);margin-top:8px}
+.log div{padding:2px 0}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--muted);margin-top:8px}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
+input[type=range]{accent-color:var(--route);width:110px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Route Lab: how a GPS uses live data</h1>
+  <p>Gray dots are other drivers' phones. Each one reports its speed when it finishes a block. The system never sees crashes directly. It infers them from those reports, then routes your car around what it believes.</p>
+</header>
+
+<div class="layout">
+  <div class="mapbox">
+    <div class="bar">
+      <label class="inline lbl">From <select id="from"></select></label>
+      <label class="inline lbl">To <select id="to"></select></label>
+      <label class="inline lbl">Time of day <select id="time"></select></label>
+      <label class="inline lbl">Phones reporting <input type="range" id="probes" min="4" max="80" step="1" value="40"><b id="probesOut">40</b></label>
+      <label class="inline lbl"><input type="checkbox" id="truth"> Show ground truth</label>
+      <span class="clock" id="clock">07:30:00</span>
+    </div>
+    <div class="bar">
+      <span class="lbl">Click a road to</span>
+      <button class="tool" data-m="inspect" aria-pressed="true">Inspect it</button>
+      <button class="tool" data-m="1" aria-pressed="false"><i class="sw" style="background:var(--slow)"></i>Slow it</button>
+      <button class="tool" data-m="2" aria-pressed="false"><i class="sw" style="background:var(--jam)"></i>Crash</button>
+      <button class="tool" data-m="3" aria-pressed="false"><i class="sw" style="background:var(--closed)"></i>Close it</button>
+      <button class="tool" data-m="0" aria-pressed="false">Clear it</button>
+    </div>
+    <svg id="map" viewBox="0 0 720 480" role="img" aria-label="Base road map with probe vehicles and a routed car">
+      <g id="gBlocks"></g><g id="gRoads"></g><g id="gNaive"></g><g id="gRoute"></g><g id="gSearch"></g><g id="gProbes"></g><g id="gHits"></g><g id="gPlaces"></g>
+      <g id="car" style="display:none;pointer-events:none">
+        <rect x="-12" y="-8" width="24" height="16" rx="4" fill="var(--route)" stroke="var(--panel)" stroke-width="2"></rect>
+        <rect x="3" y="-5" width="6" height="10" rx="2" fill="var(--panel)" opacity="0.85"></rect>
+      </g>
+    </svg>
+    <div class="bar" style="margin-top:10px;margin-bottom:0">
+      <button class="primary" id="drive">Drive</button>
+      <button id="stop">Reset car</button>
+      <button id="search">Show the search</button>
+      <button id="crash">Crash on the boulevard</button>
+      <button id="clearAll">Clear all and reset</button>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--slow)"></i>Believed slow</span>
+      <span><i class="sw" style="background:var(--jam)"></i>Believed jammed</span>
+      <span><i class="sw" style="background:var(--closed)"></i>Believed closed</span>
+      <span><i class="sw" style="background:var(--route)"></i>Chosen route</span>
+      <span><i class="sw" style="background:var(--ping)"></i>Phone sending a report</span>
+    </div>
+    <p class="note">Simulated base at 15x speed. The probe phones stand in for the millions of phones that feed Google Maps and Waze. Colors show what the system believes, not what is true. Turn on ground truth to compare.</p>
+  </div>
+
+  <aside>
+    <section>
+      <h2><span class="step">1</span>Live data feed</h2>
+      <p class="sub" id="rate"></p>
+      <div class="feed" id="feed"></div>
+    </section>
+    <section>
+      <h2><span class="step">2</span>Processing: one road up close</h2>
+      <div class="insp" id="insp"></div>
+    </section>
+    <section>
+      <h2><span class="step">3</span>Optimization</h2>
+      <p class="sub" id="opt"></p>
+    </section>
+    <section>
+      <h2><span class="step">4</span>Output</h2>
+      <div class="eta"><strong id="eta">0.0</strong><span>min estimated<br><span id="etaSub" class="lbl"></span></span></div>
+      <p class="sub" id="cmp"></p>
+      <div class="log" id="log"></div>
+    </section>
+  </aside>
+</div>
+</div>
+
+<script>
+const COLS=9,ROWS=6,S=80,M=40,SIM_RATE=15,WINDOW=300,PRIOR=1,SEG=0.25;
+const K=(x,y)=>x+","+y, XY=k=>k.split(",").map(Number), P=k=>{const [x,y]=XY(k);return [M+x*S,M+y*S];};
+const LAKE="6,4";
+const PLACES={"Main Gate":"0,2","Flight Line":"8,2","Barracks":"1,0","Clinic":"5,1","School":"3,3","Commissary":"7,5","Fitness Center":"2,5"};
+let START="0,2",DEST="8,2";
+const TIMES={
+  "0600":{label:"0600",main:1.0,side:1.0,school:false},
+  "0730":{label:"0730 rush",main:3.2,side:1.3,school:true},
+  "1200":{label:"1200",main:1.4,side:1.1,school:false},
+  "1630":{label:"1630 rush",main:3.0,side:1.4,school:false},
+  "2200":{label:"2200",main:1.0,side:1.0,school:false}
+};
+const INC=[1,0.45,0.17,0], INCNAME=["clear","slow","crash","closed"];
+const ROWN=["Hangar Rd","Oak St","Flight Line Blvd","Pine St","Lake Rd","Harbor Rd"];
+const COLN=["1st Ave","2nd Ave","3rd Ave","4th Ave","Main St","6th Ave","7th Ave","8th Ave","9th Ave"];
+
+const edges=[],adj={};
+for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){const k=K(x,y);if(k!==LAKE)adj[k]=[];}
+function addEdge(a,b){
+  if(a===LAKE||b===LAKE)return;
+  const [ax,ay]=XY(a),[bx,by]=XY(b),horiz=ay===by;
+  const e={a,b,key:a+"|"+b,main:(horiz&&ay===2)||(!horiz&&ax===4),school:a==="3,3"||b==="3,3",inc:0,pings:[],
+    name:horiz?`${ROWN[ay]}, block ${ax+1}`:`${COLN[ax]}, block ${ay+1}`};
+  edges.push(e);adj[a].push({to:b,e});adj[b].push({to:a,e});
+}
+for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){if(x<COLS-1)addEdge(K(x,y),K(x+1,y));if(y<ROWS-1)addEdge(K(x,y),K(x,y+1));}
+const NODE_COUNT=Object.keys(adj).length;
+
+const $=id=>document.getElementById(id);
+const st={time:"1200",mode:"inspect",truth:false,sel:null};
+for(const t in TIMES)$("time").add(new Option(TIMES[t].label,t));
+$("time").value=st.time;
+for(const n in PLACES){$("from").add(new Option(n,PLACES[n]));$("to").add(new Option(n,PLACES[n]));}
+$("from").value=START;$("to").value=DEST;
+const placeName=k=>Object.keys(PLACES).find(n=>PLACES[n]===k);
+function setTrip(){
+  START=$("from").value;DEST=$("to").value;
+  drive=null;car.style.display="none";logLines=[];$("log").innerHTML="";
+  $("drive").textContent=`Drive to ${placeName(DEST)}`;
+  if(START===DEST)logMsg("Pick a destination different from the start.");
+  drawPlaces();slowUpdate();
+}
+let simT=0,feed=[],drive=null,searchAnim=null,logLines=[];
+
+const free=e=>e.main?45:25;
+function histSpeed(e){const t=TIMES[st.time];let v=free(e)/(e.main?t.main:t.side);if(e.school&&t.school)v*=0.4;return v;}
+const truthSpeed=e=>histSpeed(e)*INC[e.inc];
+function recent(e){while(e.pings.length&&simT-e.pings[0].t>WINDOW)e.pings.shift();return e.pings;}
+function estimate(e){
+  const r=recent(e),h=histSpeed(e),n=r.length;
+  const last3=r.slice(-3);
+  if(last3.length===3&&last3.every(p=>p.v<3))return {v:0,closed:true,n,h,sum:r.reduce((s,p)=>s+p.v,0)};
+  const sum=r.reduce((s,p)=>s+p.v,0);
+  return {v:(PRIOR*h+sum)/(PRIOR+n),closed:false,n,h,sum};
+}
+const weight=e=>{const s=estimate(e);return s.closed?Infinity:SEG/Math.max(s.v,0.5)*60;};
+const truthMin=e=>e.inc===3?Infinity:SEG/Math.max(truthSpeed(e),1.5)*60;
+
+function dijkstra(src,dst,costFn,record){
+  const dist={[src]:0},prev={},prevE={},done=new Set(),order=[];
+  while(true){
+    let u=null,best=Infinity;
+    for(const k in dist)if(!done.has(k)&&dist[k]<best){best=dist[k];u=k;}
+    if(u===null)break;
+    done.add(u);if(record)order.push({k:u,d:dist[u]});
+    if(u===dst)break;
+    for(const {to,e} of adj[u]){const c=costFn(e);if(!isFinite(c))continue;const nd=dist[u]+c;
+      if(dist[to]===undefined||nd<dist[to]-1e-9){dist[to]=nd;prev[to]=u;prevE[to]=e;}}
+  }
+  if(dist[dst]===undefined)return {none:true,order,evaluated:done.size};
+  const path=[dst],es=[];let k=dst;
+  while(k!==src){es.unshift(prevE[k]);k=prev[k];path.unshift(k);}
+  return {path,edges:es,cost:dist[dst],evaluated:done.size,order};
+}
+
+function addPing(e,v,car){
+  e.pings.push({t:simT,v});
+  feed.unshift({t:simT,car,e,v});if(feed.length>9)feed.pop();
+}
+function logMsg(m){logLines.unshift(m);logLines=logLines.slice(0,5);$("log").innerHTML=logLines.map(l=>`<div>${l}</div>`).join("");}
+
+/* probes */
+const probes=[];let probeId=1;
+function spawnProbe(){
+  const keys=Object.keys(adj),node=keys[Math.floor(Math.random()*keys.length)];
+  const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+  c.setAttribute("r","4");c.setAttribute("fill","var(--probe)");$("gProbes").appendChild(c);
+  const p={id:probeId++,node,e:null,to:null,prog:0,speed:10,wait:0,flash:0,el:c,came:null};
+  chooseNext(p);probes.push(p);
+}
+function chooseNext(p){
+  let opts=adj[p.node].filter(o=>o.e!==p.came);if(!opts.length)opts=adj[p.node].slice();
+  while(opts.length){
+    const w=opts.map(o=>o.e.main?4:1),tot=w.reduce((a,b)=>a+b,0);let r=Math.random()*tot,i=0;
+    while(r>w[i]){r-=w[i];i++;}
+    const o=opts[i];
+    if(o.e.inc===3){addPing(o.e,0,"Car "+p.id);p.flash=0.35;opts.splice(i,1);continue;}
+    p.e=o.e;p.to=o.to;p.prog=0;p.speed=Math.max(1.5,truthSpeed(o.e)*(0.85+Math.random()*0.3));return;
+  }
+  p.e=null;p.wait=20;
+}
+function setProbeCount(n){
+  while(probes.length<n)spawnProbe();
+  while(probes.length>n){const p=probes.pop();p.el.remove();}
+  $("probesOut").textContent=n;
+}
+function updateProbes(ds,dt){
+  for(const p of probes){
+    if(p.flash>0)p.flash-=dt;
+    if(!p.e){p.wait-=ds;if(p.wait<=0){p.came=null;chooseNext(p);}continue;}
+    p.prog+=ds/(SEG/p.speed*3600);
+    if(p.prog>=1){addPing(p.e,p.speed,"Car "+p.id);p.flash=0.35;p.came=p.e;p.node=p.to;chooseNext(p);}
+  }
+}
+function drawProbes(){
+  for(const p of probes){
+    let x,y;
+    if(!p.e){[x,y]=P(p.node);}
+    else{const [x1,y1]=P(p.node),[x2,y2]=P(p.to),o=p.e.main?3:2;x=x1+(x2-x1)*p.prog;y=y1+(y2-y1)*p.prog;
+      if(x1===x2)x+=(y2>y1?-o:o);else y+=(x2>x1?o:-o);}
+    p.el.setAttribute("cx",x.toFixed(1));p.el.setAttribute("cy",y.toFixed(1));
+    const f=p.flash>0;p.el.setAttribute("fill",f?"var(--ping)":"var(--probe)");p.el.setAttribute("r",f?"6":"4");
+  }
+}
+
+function syncSpeeds(e){
+  for(const p of probes)if(p.e===e&&e.inc!==3)p.speed=Math.max(1.5,truthSpeed(e)*(0.85+Math.random()*0.3));
+  if(drive&&!drive.done&&drive.edges[drive.i]===e&&e.inc!==3)drive.speed=Math.max(1.5,truthSpeed(e));
+}
+/* your car */
+const car=$("car");
+function startDrive(){
+  const r=dijkstra(START,DEST,weight);
+  if(r.none){logMsg("No open route. Clear an incident first.");return;}
+  logLines=[];
+  drive={path:r.path,edges:r.edges,i:0,prog:0,speed:10,start:simT,eta0:r.cost,reroutes:0,node:START};
+  car.style.display="";
+  logMsg(`Departed. Predicted trip: ${r.cost.toFixed(1)} min.`);
+  enterEdge();
+}
+function replan(node){
+  const oldRest=drive.path.slice(drive.i+1).join(">");
+  const r=dijkstra(node,DEST,weight);
+  if(r.none){drive.stuck=true;drive.path=[node];drive.edges=[];drive.i=0;logMsg("Stuck. The system knows of no open path. Clear an incident.");return false;}
+  drive.stuck=false;
+  if(r.path.join(">")!==oldRest&&drive.path.length>1){drive.reroutes++;logMsg(`Rerouted at ${clockStr()}. New reports made the old path slower.`);}
+  drive.path=r.path;drive.edges=r.edges;drive.i=0;drive.node=node;return true;
+}
+function enterEdge(){
+  const e=drive.edges[drive.i];
+  if(e.inc===3){
+    for(let j=0;j<3;j++)addPing(e,0,"You");
+    logMsg("Your car hit a closure the system had not detected. Your phone reported it.");
+    drive.path=[drive.node,...drive.path.slice(drive.i+1)];
+    if(replan(drive.node))enterEdge();
+    return;
+  }
+  drive.speed=Math.max(1.5,truthSpeed(e));drive.prog=0;
+}
+function updateCar(ds){
+  if(!drive)return;
+  if(drive.stuck){if(replan(drive.node))enterEdge();return;}
+  if(drive.done)return;
+  const e=drive.edges[drive.i];
+  drive.prog+=ds/(SEG/drive.speed*3600);
+  if(drive.prog<1)return;
+  addPing(e,drive.speed,"You");
+  const node=drive.path[drive.i+1];drive.node=node;
+  if(node===DEST){
+    drive.done=true;
+    const actual=(simT-drive.start)/60;
+    logMsg(`Arrived. Predicted ${drive.eta0.toFixed(1)} min at departure. Actual ${actual.toFixed(1)} min. ${drive.reroutes} reroute${drive.reroutes===1?"":"s"}.`);
+    drive.prog=1;return;
+  }
+  drive.i++;
+  const restEdges=drive.edges.slice(drive.i);
+  drive.path=drive.path.slice(drive.i);drive.edges=restEdges;drive.i=0;
+  const before=drive.path.join(">");
+  drive.path=[node,...drive.path.slice(1)];
+  const r=dijkstra(node,DEST,weight);
+  if(r.none){drive.stuck=true;logMsg("Stuck. The system knows of no open path. Clear an incident.");return;}
+  if(r.path.join(">")!==before){drive.reroutes++;logMsg(`Rerouted at ${clockStr()}. New reports made the old path slower.`);}
+  drive.path=r.path;drive.edges=r.edges;drive.i=0;
+  enterEdge();
+}
+function drawCar(){
+  if(!drive)return;
+  let x,y,ang=0;
+  if(drive.done||drive.stuck||!drive.edges.length){[x,y]=P(drive.node);}
+  else{const a=drive.path[drive.i],b=drive.path[drive.i+1],[x1,y1]=P(a),[x2,y2]=P(b),f=Math.min(1,drive.prog);
+    x=x1+(x2-x1)*f;y=y1+(y2-y1)*f;ang=Math.atan2(y2-y1,x2-x1)*180/Math.PI;}
+  car.setAttribute("transform",`translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${ang.toFixed(0)})`);
+}
+
+/* drawing */
+function drawBlocks(){
+  let h="";const lakeCells=["5,3","6,3","5,4","6,4"];
+  for(let cy=0;cy<ROWS-1;cy++)for(let cx=0;cx<COLS-1;cx++){if(lakeCells.includes(K(cx,cy)))continue;
+    h+=`<rect x="${M+cx*S+13}" y="${M+cy*S+13}" width="${S-26}" height="${S-26}" rx="5" fill="var(--block)"/>`;}
+  const [lx,ly]=P(LAKE);
+  h+=`<ellipse cx="${lx}" cy="${ly}" rx="62" ry="54" fill="var(--lake)"/><text x="${lx}" y="${ly+4}" text-anchor="middle" font-size="12" fill="var(--muted)" font-style="italic">Reservoir</text>`;
+  $("gBlocks").innerHTML=h;
+}
+function colorFor(e){
+  let ratio,closed;
+  if(st.truth){closed=e.inc===3;ratio=truthSpeed(e)/free(e);}
+  else{const s=estimate(e);closed=s.closed;ratio=s.v/free(e);}
+  if(closed)return ["var(--closed)",true];
+  if(ratio<0.3)return ["var(--jam)",false];
+  if(ratio<0.6)return ["var(--slow)",false];
+  return [null,false];
+}
+function drawRoads(){
+  let h="",hits="";
+  for(const e of edges){
+    const [x1,y1]=P(e.a),[x2,y2]=P(e.b),w=e.main?12:7;
+    h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--casing)" stroke-width="${w+3}" stroke-linecap="round"/>`;
+    h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--road)" stroke-width="${w}" stroke-linecap="round"/>`;
+    const [c,closed]=colorFor(e);
+    if(c)h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${w-2}" stroke-linecap="round"${closed?' stroke-dasharray="6 5"':''}/>`;
+    if(st.sel===e)h+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--route)" stroke-width="${w+8}" stroke-linecap="round" fill="none" opacity="0.35"/>`;
+    hits+=`<line data-k="${e.key}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="rgba(0,0,0,0)" stroke-width="26" pointer-events="stroke" style="cursor:pointer"><title>${e.name}</title></line>`;
+  }
+  const lbl=(t,x,y,r)=>`<text x="${x}" y="${y}" font-size="11" fill="var(--muted)" transform="rotate(${r} ${x} ${y})" style="paint-order:stroke;stroke:var(--paper);stroke-width:3px">${t}</text>`;
+  h+=lbl("Flight Line Blvd",M+1.15*S,M+2*S-12,0)+lbl("Main St",M+4*S+12,M+0.6*S,90);
+  $("gRoads").innerHTML=h;
+  if(!$("gHits").childElementCount)$("gHits").innerHTML=hits;
+}
+const poly=path=>path.map(k=>P(k).join(",")).join(" ");
+function drawRoute(path){
+  $("gRoute").innerHTML=path&&path.length>1?`<polyline points="${poly(path)}" fill="none" stroke="var(--route)" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>`:"";
+}
+function drawPlaces(){
+  let h="";
+  for(const n in PLACES){
+    const k=PLACES[n],[x,y]=P(k),[gx,gy]=XY(k),key=k===START||k===DEST;
+    h+=`<circle cx="${x}" cy="${y}" r="${key?10:7}" fill="${key?"var(--route)":"var(--panel)"}" stroke="var(--ink)" stroke-width="2"/>`;
+    const anchor=gx===0?"start":gx===COLS-1?"end":"middle",dx=gx===0?-6:gx===COLS-1?6:0,ty=gy===0?y+26:y-15;
+    h+=`<text x="${x+dx}" y="${ty}" text-anchor="${anchor}" font-size="13" font-weight="600" fill="var(--ink)" style="paint-order:stroke;stroke:var(--paper);stroke-width:4px">${n}</text>`;
+  }
+  $("gPlaces").innerHTML=h;
+}
+
+function clockStr(){
+  const base=+st.time.slice(0,2)*3600+ +st.time.slice(2)*60,t=Math.floor(base+simT)%86400;
+  const p=n=>String(n).padStart(2,"0");return `${p(Math.floor(t/3600))}:${p(Math.floor(t%3600/60))}:${p(t%60)}`;
+}
+function ago(t){const s=Math.round(simT-t);return s<60?`${s}s ago`:`${Math.floor(s/60)}m ${s%60}s ago`;}
+
+function renderFeed(){
+  const lastMin=edges.reduce((n,e)=>n+e.pings.filter(p=>simT-p.t<=60).length,0);
+  $("rate").textContent=`${lastMin} speed reports in the last minute from ${probes.length} phones.`;
+  $("feed").innerHTML=feed.map(f=>{
+    const bad=f.v<histSpeed(f.e)*0.5;
+    return `<div class="r"><span>${fmtT(f.t)}</span><span class="${f.car==="You"?"you":""}">${f.car}</span><span>${f.e.name}</span><span class="v ${bad?"bad":""}">${f.v.toFixed(0)} mph</span></div>`;
+  }).join("")||`<div class="lbl">Waiting for reports.</div>`;
+}
+function fmtT(t){const base=+st.time.slice(0,2)*3600+ +st.time.slice(2)*60,x=Math.floor(base+t)%86400,p=n=>String(n).padStart(2,"0");
+  return `${p(Math.floor(x/3600))}:${p(Math.floor(x%3600/60))}:${p(x%60)}`;}
+
+function renderInspector(){
+  const e=st.sel;
+  if(!e){$("insp").innerHTML=`<p class="sub" style="margin:0">Choose <b>Inspect it</b>, then click any road. You'll see the raw reports and the math that turns them into a speed estimate.</p>`;return;}
+  const s=estimate(e),r=recent(e);
+  const chips=r.slice(-10).reverse().map(p=>`<span class="chip ${p.v<s.h*0.5?"bad":""}">${p.v.toFixed(0)} mph, ${ago(p.t)}</span>`).join("")||`<span class="lbl">No reports in the last 5 minutes.</span>`;
+  let math;
+  if(s.closed)math=`Last 3 reports are under 3 mph. The system treats this road as closed. Travel-time weight = infinite.`;
+  else{
+    const terms=r.length<=4?r.map(p=>p.v.toFixed(0)).join(" + "):`${r.length} reports totaling ${s.sum.toFixed(0)}`;
+    math=`Estimate = (history ${s.h.toFixed(0)}${r.length?" + "+terms:""}) ÷ ${PRIOR+r.length} = <b>${s.v.toFixed(1)} mph</b><br>Weight = ${SEG} mi ÷ ${s.v.toFixed(1)} mph × 60 = <b>${(SEG/s.v*60).toFixed(2)} min</b>`;
+  }
+  const conf=s.n===0?"None. Using history only.":s.n<3?"Low. Few reports.":"Good.";
+  $("insp").innerHTML=`<b>${e.name}</b> <span class="lbl">${e.main?"main road":"side street"}</span>
+    <div class="row"><span>History predicts at ${TIMES[st.time].label}</span><span>${s.h.toFixed(0)} mph</span></div>
+    <div class="lbl">Reports in the last 5 minutes</div><div class="chips">${chips}</div>
+    <div class="math">${math}</div>
+    <div class="row"><span>Confidence</span><span>${conf}</span></div>
+    ${st.truth?`<div class="row"><span>Ground truth (hidden in real life)</span><span>${e.inc===3?"closed":truthSpeed(e).toFixed(0)+" mph"}</span></div>`:""}`;
+}
+function renderOutput(r){
+  if(drive&&!drive.done){
+    const rest=drive.edges.slice(drive.i).reduce((s,e)=>s+weight(e),0)*(1)-(drive.edges.length?weight(drive.edges[drive.i])*Math.min(1,drive.prog):0);
+    const el=(simT-drive.start)/60;
+    $("eta").textContent=(el+rest).toFixed(1);
+    $("etaSub").textContent=`${el.toFixed(1)} min driven, ${Math.max(0,rest).toFixed(1)} to go`;
+    $("cmp").textContent=`Replans at every intersection using the newest reports. Reroutes so far: ${drive.reroutes}.`;
+    return;
+  }
+  if(drive&&drive.done){$("eta").textContent=((simT-drive.start)/60).toFixed(1);$("etaSub").textContent="actual trip time";$("cmp").textContent=`Predicted ${drive.eta0.toFixed(1)} min at departure. ${drive.reroutes} reroute${drive.reroutes===1?"":"s"}. Press Reset car to drive again.`;return;}
+  if(!r||r.none){$("eta").textContent="--";$("etaSub").textContent="no known open route";$("cmp").textContent="";return;}
+  $("eta").textContent=r.cost.toFixed(1);
+  $("etaSub").textContent=`${placeName(START)} to ${placeName(DEST)}`;
+  const nd=dijkstra(START,DEST,()=>1),real=nd.edges.reduce((s,e)=>s+truthMin(e),0);
+  $("cmp").textContent=isFinite(real)?`A GPS with no live data takes the shortest path. Right now that trip really takes ${real.toFixed(1)} min.`:`A GPS with no live data takes the shortest path and runs into a closure.`;
+}
+function slowUpdate(){
+  drawRoads();
+  let r=null;
+  if(!drive){r=dijkstra(START,DEST,weight);if(!searchAnim)drawRoute(r.none?null:r.path);}
+  else drawRoute(drive.done?null:drive.path.slice(drive.i));
+  if(!searchAnim){
+    const ev=r?r.evaluated:null;
+    $("opt").innerHTML=`Dijkstra's algorithm checks intersections in order of travel time from the start, using each road's weight from step 2. ${r&&!r.none?`It checked <b>${ev} of ${NODE_COUNT}</b> intersections to find this route. `:""}Press <b>Show the search</b> to watch it.`;
+  }
+  renderFeed();renderInspector();renderOutput(r);
+}
+
+function runSearch(){
+  const from=drive&&!drive.done?drive.node:START;
+  const r=dijkstra(from,DEST,weight,true);
+  if(searchAnim)clearInterval(searchAnim.id);
+  $("gSearch").innerHTML="";$("gRoute").innerHTML="";
+  let i=0;
+  $("opt").innerHTML=`Watching Dijkstra's algorithm. Each circle is an intersection it finalized, labeled with the cheapest travel time (minutes) from the start. It always expands the cheapest one next, so it reaches the destination through the fastest path.`;
+  searchAnim={id:setInterval(()=>{
+    if(i>=r.order.length){clearInterval(searchAnim.id);
+      if(!r.none)$("gRoute").innerHTML=`<polyline points="${poly(r.path)}" fill="none" stroke="var(--route)" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>`;
+      $("opt").innerHTML+=` <b>Done: ${r.order.length} of ${NODE_COUNT} intersections checked.</b>`;
+      setTimeout(()=>{$("gSearch").innerHTML="";searchAnim=null;},5000);return;}
+    const {k,d}=r.order[i++],[x,y]=P(k);
+    $("gSearch").insertAdjacentHTML("beforeend",`<circle cx="${x}" cy="${y}" r="13" fill="var(--route-soft)" stroke="var(--route)" stroke-width="1.5"/><text x="${x}" y="${y+4}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ink)">${d.toFixed(1)}</text>`);
+  },110)};
+}
+
+/* events */
+$("gHits").addEventListener("click",ev=>{
+  const k=ev.target.getAttribute("data-k");if(!k)return;
+  const e=edges.find(x=>x.key===k);
+  if(st.mode==="inspect"){st.sel=e;}
+  else{e.inc=+st.mode;st.sel=e;syncSpeeds(e);
+    logMsg(e.inc?`You caused a ${INCNAME[e.inc]} on ${e.name}. The system does not know yet. Watch the reports.`:`You cleared ${e.name}.`);}
+  slowUpdate();
+});
+document.querySelectorAll(".tool").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tool").forEach(x=>x.setAttribute("aria-pressed","false"));
+  b.setAttribute("aria-pressed","true");st.mode=b.dataset.m;
+});
+$("time").onchange=e=>{st.time=e.target.value;edges.forEach(x=>x.pings=[]);feed=[];logMsg(`Time set to ${TIMES[st.time].label}. Old reports discarded.`);slowUpdate();};
+$("probes").oninput=e=>setProbeCount(+e.target.value);
+$("truth").onchange=e=>{st.truth=e.target.checked;slowUpdate();};
+$("drive").onclick=()=>{if(drive&&!drive.done)return;if(START===DEST){logMsg("Pick a destination different from the start.");return;}startDrive();slowUpdate();};
+$("from").onchange=setTrip;$("to").onchange=setTrip;
+$("stop").onclick=()=>{drive=null;car.style.display="none";logLines=[];$("log").innerHTML="";slowUpdate();};
+$("search").onclick=runSearch;
+$("crash").onclick=()=>{["3,2|4,2","4,2|5,2","5,2|6,2"].forEach((k,i)=>edges.find(e=>e.key===k).inc=i===1?3:2);
+  edges.forEach(syncSpeeds);
+  st.sel=edges.find(e=>e.key==="4,2|5,2");logMsg("Crash on Flight Line Blvd at Main St. The system does not know yet. Watch the reports.");slowUpdate();};
+$("clearAll").onclick=()=>{
+  edges.forEach(e=>{e.inc=0;e.pings=[];});feed=[];
+  edges.forEach(syncSpeeds);
+  logMsg("All incidents and old reports cleared. The system starts fresh from history.");slowUpdate();};
+
+drawBlocks();drawPlaces();setProbeCount(40);$("drive").textContent=`Drive to ${placeName(DEST)}`;
+let last=performance.now(),lastSlow=0;
+function loop(now){
+  const dt=Math.min(0.1,(now-last)/1000);last=now;const ds=dt*SIM_RATE;simT+=ds;
+  updateProbes(ds,dt);updateCar(ds);drawProbes();drawCar();
+  $("clock").textContent=clockStr();
+  if(now-lastSlow>500){lastSlow=now;slowUpdate();}
+  requestAnimationFrame(loop);
+}
+slowUpdate();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
